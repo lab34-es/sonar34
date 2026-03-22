@@ -16,11 +16,12 @@ const NAV_ITEMS = [
 
 export default function Layout() {
   const location = useLocation();
+  const isFullScreen = location.pathname.startsWith("/commit/");
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
       {/* Sidebar */}
-      <Sheet
+      {!isFullScreen && <Sheet
         className="no-print"
         sx={{
           width: 220,
@@ -104,14 +105,14 @@ export default function Layout() {
             </ListItem>
           ))}
         </List>
-      </Sheet>
+      </Sheet>}
 
       {/* Main content */}
       <Box
         component="main"
         sx={{
           flex: 1,
-          p: 3,
+          p: isFullScreen ? 0 : 3,
           overflow: "auto",
         }}
       >

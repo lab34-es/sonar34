@@ -139,7 +139,7 @@ export default function CommitDiffPage() {
   const language = langFromPath(selectedFile?.newPath || selectedFile?.oldPath)
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 80px)', minHeight: 400 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', minHeight: 400 }}>
       {/* Header */}
       <Box
         sx={{

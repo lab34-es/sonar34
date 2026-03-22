@@ -1,6 +1,6 @@
 {
   "name": "@lab34-es/sonar34",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Enterprise Repository Intelligence — manage, search, analyze and enrich Git repositories at scale",
   "type": "module",
   "bin": {

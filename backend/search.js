@@ -9,6 +9,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSetting } from "./settings.js";
+import { parseLogLines, matchesFilter, dateArgs } from "./parsers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,13 +35,7 @@ function git(args, cwd, { maxBuffer = 50 * 1024 * 1024 } = {}) {
   });
 }
 
-/** Build git log date-range flags from optional dateFrom / dateTo strings (YYYY-MM-DD). */
-function dateArgs(dateFrom, dateTo) {
-  const args = [];
-  if (dateFrom) args.push(`--after=${dateFrom}`);
-  if (dateTo) args.push(`--before=${dateTo}T23:59:59`);
-  return args;
-}
+// dateArgs is imported from parsers.js
 
 /** Return the HEAD ref name (branch) or fall back to the commit hash. */
 async function getHeadRef(repoPath) {
@@ -57,11 +52,7 @@ async function getHeadRef(repoPath) {
 // Repo discovery
 // ---------------------------------------------------------------------------
 
-function matchesFilter(relPath, filters) {
-  if (!filters || filters.length === 0) return true;
-  const lower = relPath.toLowerCase();
-  return filters.some((f) => lower.includes(f.toLowerCase()));
-}
+// matchesFilter is imported from parsers.js
 
 export async function discoverRepos(filters) {
   const reposDir = getReposDir();
@@ -100,17 +91,7 @@ export async function discoverRepos(filters) {
 // Search commands
 // ---------------------------------------------------------------------------
 
-function parseLogLines(repoName, stdout) {
-  if (!stdout || !stdout.trim()) return [];
-  return stdout
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [commit, authorName, authorEmail, date, ...rest] = line.split("\t");
-      return { repo: repoName, commit, authorName, authorEmail, date, subject: rest.join("\t") };
-    });
-}
+// parseLogLines is imported from parsers.js
 
 async function searchAuthor(repos, pattern) {
   const all = await Promise.all(
