@@ -492,3 +492,229 @@ describe("PKG_DEP_MARKERS", () => {
     expect(PKG_DEP_MARKERS["@angular/core"]).toBe("Angular");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Adversarial / edge-case inputs
+// ---------------------------------------------------------------------------
+
+describe("parseRequirementsTxt (edge cases)", () => {
+  it("handles unicode in content without crashing", () => {
+    const content = "café==1.0.0\n";
+    const deps = parseRequirementsTxt(content);
+    // The parser splits on version specifier chars; unicode may split differently
+    // but it should never throw
+    expect(Array.isArray(deps)).toBe(true);
+    expect(deps.length).toBeGreaterThan(0);
+  });
+
+  it("handles very long lines", () => {
+    const longName = "a".repeat(500);
+    const content = `${longName}==1.0.0\n`;
+    const deps = parseRequirementsTxt(content);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].dependency).toBe(longName);
+  });
+
+  it("handles Windows-style line endings (CRLF)", () => {
+    const content = "flask==2.3.0\r\nrequests==2.31.0\r\n";
+    const deps = parseRequirementsTxt(content);
+    expect(deps).toHaveLength(2);
+    expect(deps[0].dependency).toBe("flask");
+    expect(deps[1].dependency).toBe("requests");
+  });
+
+  it("handles mixed line endings", () => {
+    const content = "flask==1.0\nrequests==2.0\r\ndjango==3.0\n";
+    const deps = parseRequirementsTxt(content);
+    expect(deps).toHaveLength(3);
+  });
+
+  it("handles lines with only whitespace", () => {
+    const content = "flask==1.0\n   \n  \t  \nrequests==2.0\n";
+    const deps = parseRequirementsTxt(content);
+    expect(deps).toHaveLength(2);
+  });
+
+  it("handles multiple version specifiers", () => {
+    const content = "django>=3.0,<4.0,!=3.0.1\n";
+    const deps = parseRequirementsTxt(content);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].dependency).toBe("django");
+  });
+});
+
+describe("parsePomXml (edge cases)", () => {
+  it("handles malformed XML (unclosed tags)", () => {
+    const content = `
+<dependency>
+  <groupId>com.example
+  <artifactId>broken</artifactId>
+</dependency>
+`;
+    // Should not throw, may return partial or empty results
+    const result = parsePomXml(content);
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("handles completely invalid XML", () => {
+    const content = "this is not xml at all <<>>";
+    const result = parsePomXml(content);
+    expect(result).toEqual([]);
+  });
+
+  it("handles dependencies with property placeholders", () => {
+    const content = `
+<dependency>
+  <groupId>org.springframework</groupId>
+  <artifactId>spring-core</artifactId>
+  <version>\${spring.version}</version>
+</dependency>
+`;
+    const deps = parsePomXml(content);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].version).toBe("${spring.version}");
+  });
+
+  it("handles multiple dependency blocks", () => {
+    const content = `
+<dependencies>
+  <dependency>
+    <groupId>a</groupId>
+    <artifactId>b</artifactId>
+    <version>1.0</version>
+  </dependency>
+</dependencies>
+<dependencies>
+  <dependency>
+    <groupId>c</groupId>
+    <artifactId>d</artifactId>
+    <version>2.0</version>
+  </dependency>
+</dependencies>
+`;
+    const deps = parsePomXml(content);
+    expect(deps).toHaveLength(2);
+  });
+
+  it("handles unicode in version strings", () => {
+    const content = `
+<dependency>
+  <groupId>com.example</groupId>
+  <artifactId>unicode-lib</artifactId>
+  <version>1.0-béta</version>
+</dependency>
+`;
+    const deps = parsePomXml(content);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].version).toBe("1.0-béta");
+  });
+});
+
+describe("parseBuildGradle (edge cases)", () => {
+  it("handles empty dependencies block", () => {
+    const content = "dependencies {\n}\n";
+    const deps = parseBuildGradle(content);
+    expect(deps).toEqual([]);
+  });
+
+  it("handles commented-out dependencies", () => {
+    const content = `
+dependencies {
+    // implementation 'com.google.guava:guava:31.0'
+    implementation 'junit:junit:4.13.2'
+}
+`;
+    const deps = parseBuildGradle(content);
+    // Should only parse the uncommented line
+    expect(deps.some(d => d.dependency === "junit:junit")).toBe(true);
+  });
+
+  it("handles dependencies with variable references", () => {
+    const content = `
+dependencies {
+    implementation "com.example:lib:$libVersion"
+}
+`;
+    const deps = parseBuildGradle(content);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].version).toBe("$libVersion");
+  });
+});
+
+describe("parsePipfilePackages (edge cases)", () => {
+  it("handles Pipfile with no packages sections", () => {
+    const content = `
+[requires]
+python_version = "3.11"
+
+[scripts]
+start = "python app.py"
+`;
+    const deps = parsePipfilePackages(content);
+    expect(deps).toEqual([]);
+  });
+
+  it("handles unicode in package names", () => {
+    const content = `
+[packages]
+café-utils = "==1.0.0"
+`;
+    const deps = parsePipfilePackages(content);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].dependency).toBe("café-utils");
+  });
+
+  it("handles Windows-style line endings", () => {
+    const content = "[packages]\r\nflask = \"==2.0\"\r\nrequests = \"*\"\r\n";
+    const deps = parsePipfilePackages(content);
+    expect(deps).toHaveLength(2);
+  });
+});
+
+describe("parseLogLines (edge cases)", () => {
+  it("handles lines with fewer than 5 tab-separated fields", () => {
+    const stdout = "abc123\tJohn\n";
+    const results = parseLogLines("repo", stdout);
+    // Should handle gracefully - may produce partial results or skip
+    expect(Array.isArray(results)).toBe(true);
+  });
+
+  it("handles lines with many tab-separated fields", () => {
+    const stdout = "abc123\tJohn\tjohn@ex.com\t2024-01-01\ta\tb\tc\td\n";
+    const results = parseLogLines("repo", stdout);
+    expect(results).toHaveLength(1);
+    // Subject should contain all trailing parts joined by tabs
+    expect(results[0].subject).toBe("a\tb\tc\td");
+  });
+
+  it("handles unicode in author names and subjects", () => {
+    const stdout = "abc123\tJosé García\tjose@example.com\t2024-01-01\tAñadida función\n";
+    const results = parseLogLines("repo", stdout);
+    expect(results).toHaveLength(1);
+    expect(results[0].authorName).toBe("José García");
+    expect(results[0].subject).toBe("Añadida función");
+  });
+});
+
+describe("matchesFilter (edge cases)", () => {
+  it("handles empty string filter", () => {
+    // An empty string in the filter array should match everything (since everything contains "")
+    expect(matchesFilter("workspace/my-repo", [""])).toBe(true);
+  });
+
+  it("handles path with special regex characters", () => {
+    // matchesFilter uses .includes, not regex, so these should work
+    expect(matchesFilter("workspace/my.repo", ["my.repo"])).toBe(true);
+  });
+});
+
+describe("dateArgs (edge cases)", () => {
+  it("handles empty string dates (treats as falsy)", () => {
+    expect(dateArgs("", "")).toEqual([]);
+  });
+
+  it("handles date strings with time components", () => {
+    const result = dateArgs("2024-01-01T00:00:00", undefined);
+    expect(result).toEqual(["--after=2024-01-01T00:00:00"]);
+  });
+});

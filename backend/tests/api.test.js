@@ -275,6 +275,145 @@ function createTestApp() {
     }
   });
 
+  // --- Queue: send-batch ---
+  app.post("/api/queues/:name/send-batch", (req, res) => {
+    try {
+      const q = getQueue(req.params.name);
+      const { messages } = req.body;
+      if (!Array.isArray(messages)) {
+        return res.status(400).json({ error: "'messages' must be an array of { body, delay?, priority? }." });
+      }
+      const ids = q.sendBatch(
+        messages.map((m) => ({ body: m.body, options: { delay: m.delay, priority: m.priority } }))
+      );
+      res.status(202).json({ ids });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- Queue: receive ---
+  app.post("/api/queues/:name/receive", (req, res) => {
+    const q = getQueue(req.params.name);
+    const msg = q.receive();
+    if (!msg) return res.status(204).end();
+    res.json(msg);
+  });
+
+  // --- Queue: acknowledge (delete) ---
+  app.delete("/api/queues/:name/:msgId", (req, res) => {
+    const q = getQueue(req.params.name);
+    const received = parseInt(req.query.received, 10);
+    if (Number.isNaN(received)) {
+      return res.status(400).json({ error: "'received' query param is required (integer)." });
+    }
+    const ok = q.delete(req.params.msgId, received);
+    res.json({ deleted: ok });
+  });
+
+  // --- Queue: dead-letters ---
+  app.get("/api/queues/:name/dead-letters", (req, res) => {
+    const q = getQueue(req.params.name);
+    res.json(q.deadLetters());
+  });
+
+  // --- Repo security & dependencies ---
+  const getRepoSecurityRows = db.prepare(`
+    SELECT id, dependency, version, issue, severity, url, created_at
+    FROM security WHERE repo_name = ? ORDER BY
+      CASE severity
+        WHEN 'critical' THEN 0
+        WHEN 'high' THEN 1
+        WHEN 'moderate' THEN 2
+        WHEN 'low' THEN 3
+        WHEN 'info' THEN 4
+        ELSE 5
+      END, dependency ASC
+  `);
+
+  app.get("/api/admin/repos/:workspace/:slug/security", (req, res) => {
+    try {
+      res.json(getRepoSecurityRows.all(repoFullName(req)));
+    } catch (err) {
+      res.status(500).json({ error: "Internal server error", details: err.message });
+    }
+  });
+
+  const getRepoDependencyRows = db.prepare(`
+    SELECT id, dependency, version, created_at
+    FROM dependencies WHERE name = ? ORDER BY dependency ASC
+  `);
+
+  app.get("/api/admin/repos/:workspace/:slug/dependencies", (req, res) => {
+    try {
+      res.json(getRepoDependencyRows.all(repoFullName(req)));
+    } catch (err) {
+      res.status(500).json({ error: "Internal server error", details: err.message });
+    }
+  });
+
+  // --- Sync jobs ---
+  const insertSyncJob = db.prepare(`
+    INSERT INTO sync_jobs (id, type, parent_id, repo_name, status)
+    VALUES (?, ?, ?, ?, 'pending')
+  `);
+
+  const listSyncJobs = db.prepare(`
+    SELECT id, type, parent_id, repo_name, status, progress, error, created_at, updated_at
+    FROM sync_jobs ORDER BY created_at DESC LIMIT ?
+  `);
+
+  const getSyncJob = db.prepare(`SELECT * FROM sync_jobs WHERE id = ?`);
+
+  const listChildSyncJobs = db.prepare(`
+    SELECT id, type, parent_id, repo_name, status, progress, error, created_at, updated_at
+    FROM sync_jobs WHERE parent_id = ? ORDER BY created_at ASC
+  `);
+
+  const countChildStatuses = db.prepare(`
+    SELECT status, COUNT(*) as count FROM sync_jobs WHERE parent_id = ? GROUP BY status
+  `);
+
+  app.post("/api/admin/sync-all", (req, res) => {
+    try {
+      const jobId = crypto.randomUUID();
+      insertSyncJob.run(jobId, "sync-all", null, null);
+      res.status(202).json({ jobId, status: "pending" });
+    } catch (err) {
+      res.status(500).json({ error: "Internal server error", details: err.message });
+    }
+  });
+
+  app.get("/api/admin/jobs", (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const parentOnly = req.query.parentOnly === "true";
+
+    if (parentOnly) {
+      const rows = db.prepare(`
+        SELECT id, type, parent_id, repo_name, status, progress, error, created_at, updated_at
+        FROM sync_jobs WHERE type = 'sync-all' ORDER BY created_at DESC LIMIT ?
+      `).all(limit);
+
+      const result = rows.map((row) => {
+        const statuses = countChildStatuses.all(row.id);
+        const children = {};
+        for (const s of statuses) children[s.status] = s.count;
+        return { ...row, children };
+      });
+
+      return res.json(result);
+    }
+
+    res.json(listSyncJobs.all(limit));
+  });
+
+  app.get("/api/admin/jobs/:id", (req, res) => {
+    const row = getSyncJob.get(req.params.id);
+    if (!row) return res.status(404).json({ error: "Job not found" });
+    const children = listChildSyncJobs.all(row.id);
+    res.json({ ...row, children });
+  });
+
   // --- All jobs endpoint ---
   const ALLOWED_TABLES = ["sync_jobs", "search_jobs", "enrichment_jobs"];
 
@@ -790,5 +929,223 @@ describe("GET /api/admin/all-jobs", () => {
     expect(res.body.total).toBe(5);
     expect(res.body.limit).toBe(2);
     expect(res.body.offset).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue: send-batch API
+// ---------------------------------------------------------------------------
+
+describe("POST /api/queues/:name/send-batch", () => {
+  it("sends multiple messages and returns 202 with ids", async () => {
+    const res = await request(app)
+      .post("/api/queues/search-jobs/send-batch")
+      .send({ messages: [{ body: { a: 1 } }, { body: { b: 2 } }, { body: { c: 3 } }] });
+    expect(res.status).toBe(202);
+    expect(res.body).toHaveProperty("ids");
+    expect(res.body.ids).toHaveLength(3);
+  });
+
+  it("rejects when messages is not an array", async () => {
+    const res = await request(app)
+      .post("/api/queues/search-jobs/send-batch")
+      .send({ messages: "not-an-array" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("messages");
+  });
+
+  it("rejects missing messages field", async () => {
+    const res = await request(app)
+      .post("/api/queues/search-jobs/send-batch")
+      .send({});
+    expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue: receive API
+// ---------------------------------------------------------------------------
+
+describe("POST /api/queues/:name/receive", () => {
+  it("returns 204 when queue is empty", async () => {
+    const res = await request(app).post("/api/queues/search-jobs/receive");
+    expect(res.status).toBe(204);
+  });
+
+  it("returns a message when queue has items", async () => {
+    await request(app).post("/api/queues/search-jobs/send").send({ body: { test: true } });
+
+    const res = await request(app).post("/api/queues/search-jobs/receive");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("id");
+    expect(res.body).toHaveProperty("body");
+    expect(res.body.body).toEqual({ test: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue: acknowledge (delete) API
+// ---------------------------------------------------------------------------
+
+describe("DELETE /api/queues/:name/:msgId", () => {
+  it("deletes a received message", async () => {
+    await request(app).post("/api/queues/search-jobs/send").send({ body: { ack: true } });
+    const recvRes = await request(app).post("/api/queues/search-jobs/receive");
+    const { id, received } = recvRes.body;
+
+    const res = await request(app).delete(`/api/queues/search-jobs/${id}?received=${received}`);
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+  });
+
+  it("returns 400 when received param is missing", async () => {
+    const res = await request(app).delete("/api/queues/search-jobs/some-id");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("received");
+  });
+
+  it("returns deleted=false for non-existent message", async () => {
+    const res = await request(app).delete("/api/queues/search-jobs/nonexistent?received=12345");
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Queue: dead-letters API
+// ---------------------------------------------------------------------------
+
+describe("GET /api/queues/:name/dead-letters", () => {
+  it("returns an array (empty when no dead letters)", async () => {
+    const res = await request(app).get("/api/queues/search-jobs/dead-letters");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Repo security endpoint
+// ---------------------------------------------------------------------------
+
+describe("GET /api/admin/repos/:workspace/:slug/security", () => {
+  it("returns empty array when no security findings", async () => {
+    db.prepare("INSERT INTO repositories (name, path) VALUES (?, ?)").run("ws/sec-repo", "/tmp/repos/ws/sec-repo");
+
+    const res = await request(app).get("/api/admin/repos/ws/sec-repo/security");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns security findings for a repo", async () => {
+    db.prepare("INSERT INTO repositories (name, path) VALUES (?, ?)").run("ws/vuln-repo", "/tmp/repos/ws/vuln-repo");
+    db.prepare("INSERT INTO security (repo_name, dependency, severity, issue) VALUES (?, ?, ?, ?)").run("ws/vuln-repo", "lodash", "high", "Prototype Pollution");
+    db.prepare("INSERT INTO security (repo_name, dependency, severity, issue) VALUES (?, ?, ?, ?)").run("ws/vuln-repo", "express", "low", "Open Redirect");
+
+    const res = await request(app).get("/api/admin/repos/ws/vuln-repo/security");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    // Should be sorted by severity (high before low)
+    expect(res.body[0].severity).toBe("high");
+    expect(res.body[1].severity).toBe("low");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Repo dependencies endpoint
+// ---------------------------------------------------------------------------
+
+describe("GET /api/admin/repos/:workspace/:slug/dependencies", () => {
+  it("returns empty array when no dependencies", async () => {
+    db.prepare("INSERT INTO repositories (name, path) VALUES (?, ?)").run("ws/no-deps", "/tmp/repos/ws/no-deps");
+
+    const res = await request(app).get("/api/admin/repos/ws/no-deps/dependencies");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns dependencies for a repo", async () => {
+    db.prepare("INSERT INTO repositories (name, path) VALUES (?, ?)").run("ws/dep-repo", "/tmp/repos/ws/dep-repo");
+    db.prepare("INSERT INTO dependencies (name, dependency, version) VALUES (?, ?, ?)").run("ws/dep-repo", "express", "^5.0.0");
+    db.prepare("INSERT INTO dependencies (name, dependency, version) VALUES (?, ?, ?)").run("ws/dep-repo", "cors", "^2.8.5");
+
+    const res = await request(app).get("/api/admin/repos/ws/dep-repo/dependencies");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    // Should be sorted alphabetically by dependency name
+    expect(res.body[0].dependency).toBe("cors");
+    expect(res.body[1].dependency).toBe("express");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sync-all API
+// ---------------------------------------------------------------------------
+
+describe("POST /api/admin/sync-all", () => {
+  it("creates a sync-all job and returns 202", async () => {
+    const res = await request(app).post("/api/admin/sync-all");
+    expect(res.status).toBe(202);
+    expect(res.body).toHaveProperty("jobId");
+    expect(res.body.status).toBe("pending");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Admin jobs API
+// ---------------------------------------------------------------------------
+
+describe("GET /api/admin/jobs", () => {
+  it("returns empty list when no sync jobs exist", async () => {
+    const res = await request(app).get("/api/admin/jobs");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns sync jobs after creation", async () => {
+    await request(app).post("/api/admin/sync-all");
+
+    const res = await request(app).get("/api/admin/jobs");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].type).toBe("sync-all");
+  });
+
+  it("supports parentOnly filter", async () => {
+    const createRes = await request(app).post("/api/admin/sync-all");
+    const parentId = createRes.body.jobId;
+
+    // Insert a child sync-one job directly
+    db.prepare("INSERT INTO sync_jobs (id, type, parent_id, repo_name, status) VALUES (?, ?, ?, ?, 'pending')")
+      .run("child-1", "sync-one", parentId, "ws/some-repo");
+
+    const res = await request(app).get("/api/admin/jobs?parentOnly=true");
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBeGreaterThanOrEqual(1);
+    // Each row should have children status counts
+    for (const row of res.body) {
+      expect(row).toHaveProperty("children");
+    }
+  });
+});
+
+describe("GET /api/admin/jobs/:id", () => {
+  it("returns 404 for non-existent job", async () => {
+    const res = await request(app).get("/api/admin/jobs/nonexistent");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns job with children", async () => {
+    const createRes = await request(app).post("/api/admin/sync-all");
+    const parentId = createRes.body.jobId;
+
+    db.prepare("INSERT INTO sync_jobs (id, type, parent_id, repo_name, status) VALUES (?, ?, ?, ?, 'pending')")
+      .run("child-detail-1", "sync-one", parentId, "ws/repo1");
+    db.prepare("INSERT INTO sync_jobs (id, type, parent_id, repo_name, status) VALUES (?, ?, ?, ?, 'pending')")
+      .run("child-detail-2", "sync-one", parentId, "ws/repo2");
+
+    const res = await request(app).get(`/api/admin/jobs/${parentId}`);
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(parentId);
+    expect(res.body.children).toHaveLength(2);
   });
 });

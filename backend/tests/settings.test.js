@@ -97,9 +97,10 @@ describe("settings", () => {
     it("shows isSet=false for unset secret settings", () => {
       const settings = getAllSettings();
       const token = settings.find((s) => s.key === "BITBUCKET_API_TOKEN");
-      // The token might be empty or might have env var; but with no env and no DB it should be false
-      // Since we cleared DB and env might not have it
       expect(token.secret).toBe(true);
+      expect(token.value).toBeUndefined();
+      // With no DB row and no env var, isSet should be false
+      expect(token.isSet).toBe(false);
     });
   });
 
