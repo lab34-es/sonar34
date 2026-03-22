@@ -1,0 +1,22 @@
+# Source / dev files (not needed in published package)
+frontend/src/
+frontend/node_modules/
+frontend/package.json
+frontend/package-lock.json
+frontend/vite.config.js
+frontend/eslint.config.js
+frontend/index.html
+frontend/public/
+frontend/README.md
+frontend/.gitignore
+
+backend/node_modules/
+backend/package.json
+backend/package-lock.json
+
+# Dev tooling
+node_modules/
+.git/
+.gitignore
+.opencode/
+logo.html

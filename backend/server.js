@@ -1,8 +1,11 @@
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 
 import db from "./db.js";
 import { searchQueue, getQueue, listQueueNames, enrichActivityQueue, enrichTechnologiesQueue, enrichPrsQueue, enrichSecurityQueue, enrichDependenciesQueue } from "./queue.js";
@@ -12,6 +15,8 @@ import { startEnrichWorkers, stopEnrichWorkers } from "./enrichWorker.js";
 import { runSearch, runSearchStreaming, discoverRepos, VALID_COMMANDS } from "./search.js";
 import { initIO } from "./io.js";
 import { getAllSettings, updateSettings, getSetting } from "./settings.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const httpServer = createServer(app);
@@ -1036,47 +1041,74 @@ app.delete("/api/search/favourites/:id", (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Static file serving for pre-built frontend SPA
+// ---------------------------------------------------------------------------
+
+const distDir = path.resolve(__dirname, "..", "frontend", "dist");
+
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+
+  // SPA fallback — all non-API routes serve index.html
+  app.get("/{*splat}", (req, res) => {
+    res.sendFile(path.join(distDir, "index.html"));
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Start – clean up stale jobs from previous runs, then start workers
 // ---------------------------------------------------------------------------
 
-// Delete all job rows so nothing is left over from a previous session
-db.exec(`DELETE FROM search_jobs`);
-db.exec(`DELETE FROM sync_jobs`);
-db.exec(`DELETE FROM enrichment_jobs`);
+export function startServer() {
+  return new Promise((resolve) => {
+    // Delete all job rows so nothing is left over from a previous session
+    db.exec(`DELETE FROM search_jobs`);
+    db.exec(`DELETE FROM sync_jobs`);
+    db.exec(`DELETE FROM enrichment_jobs`);
 
-// Purge every queue so no stale messages are re-processed
-for (const name of listQueueNames()) {
-  getQueue(name).purge();
+    // Purge every queue so no stale messages are re-processed
+    for (const name of listQueueNames()) {
+      getQueue(name).purge();
+    }
+
+    console.log("Cleared all jobs and queue messages.");
+
+    startWorker();
+    startSyncWorkers();
+    startEnrichWorkers();
+
+    httpServer.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+      resolve({ port: PORT });
+    });
+
+    // Graceful shutdown
+    process.on("SIGINT", async () => {
+      console.log("\nShutting down...");
+      await stopWorker();
+      await stopSyncWorkers();
+      await stopEnrichWorkers();
+      httpServer.close(() => {
+        db.close();
+        process.exit(0);
+      });
+    });
+
+    process.on("SIGTERM", async () => {
+      await stopWorker();
+      await stopSyncWorkers();
+      await stopEnrichWorkers();
+      httpServer.close(() => {
+        db.close();
+        process.exit(0);
+      });
+    });
+  });
 }
 
-console.log("Cleared all jobs and queue messages.");
-
-startWorker();
-startSyncWorkers();
-startEnrichWorkers();
-
-httpServer.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
-
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  console.log("\nShutting down...");
-  await stopWorker();
-  await stopSyncWorkers();
-  await stopEnrichWorkers();
-  httpServer.close(() => {
-    db.close();
-    process.exit(0);
-  });
-});
-
-process.on("SIGTERM", async () => {
-  await stopWorker();
-  await stopSyncWorkers();
-  await stopEnrichWorkers();
-  httpServer.close(() => {
-    db.close();
-    process.exit(0);
-  });
-});
+// If this file is executed directly (not imported), start the server immediately.
+// This preserves backward compatibility with `node backend/server.js`.
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (isDirectRun) {
+  startServer();
+}

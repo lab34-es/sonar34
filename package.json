@@ -1,0 +1,66 @@
+{
+  "name": "@lab34-es/sonar34",
+  "version": "0.0.1",
+  "description": "Enterprise Repository Intelligence — manage, search, analyze and enrich Git repositories at scale",
+  "type": "module",
+  "bin": {
+    "sonar34": "./bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "backend/",
+    "frontend/dist/"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "node --watch backend/server.js",
+    "dev:client": "vite --config frontend/vite.config.js",
+    "build": "vite build --config frontend/vite.config.js",
+    "prepublishOnly": "npm run build",
+    "start": "node bin/cli.js"
+  },
+  "keywords": [
+    "git",
+    "repository",
+    "search",
+    "analytics",
+    "bitbucket",
+    "security",
+    "audit",
+    "dependencies",
+    "enterprise"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lab34-es/sonar34.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@minnzen/sqliteq": "^0.1.0",
+    "better-sqlite3": "^12.8.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "open": "^11.0.0",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@monaco-editor/react": "^4.7.0",
+    "@mui/joy": "^5.0.0-beta.52",
+    "@tanstack/react-virtual": "^3.13.23",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.1",
+    "socket.io-client": "^4.8.3",
+    "vite": "^8.0.1"
+  }
+}

@@ -50,7 +50,7 @@ export const SETTING_DEFS = [
     key: "REPOS_DIR",
     label: "Repos directory",
     envVar: "REPOS_DIR",
-    default: path.resolve(path.join(__dirname, "..", "repos")),
+    default: path.resolve(path.join(__dirname, "..", "..", "repos")),
     secret: false,
   },
   {
