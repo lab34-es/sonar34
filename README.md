@@ -1,4 +1,4 @@
-# Sonar34
+e# Sonar34
 
 ![Sonar34](logo.png)
 
@@ -63,7 +63,7 @@ The highest-severity bump among all commits since the last release wins. A scope
 
 ## Requirements
 
-- Node.js >= 20
+- Node.js >= 24
 - Git installed and available in PATH
 - A Bitbucket Cloud account with API access
 - Other tools for Java and Python security analysis (as seen in the "Settings" section)
