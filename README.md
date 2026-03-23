@@ -47,6 +47,22 @@ Once repositories are imported:
 - **Repos** — browse all imported repositories. From here you can trigger enrichment (activity sparklines, technology detection, open PR counts, security audits, dependency extraction) on individual repos or in bulk.
 - **Search** — cross-repo search by author, commit message, file path, or code content. Searches run across all imported repositories with real-time streaming results.
 
+## Contributing
+
+### Commit message convention
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) to automate versioning and releases. When pushing to `master`, a CI pipeline runs the tests and — if they pass — creates a new GitHub release with the version bump determined by your commit messages.
+
+| Commit prefix | Version bump | Example |
+|---|---|---|
+| `fix:`, `chore:`, `docs:`, `refactor:`, etc. | **patch** (0.0.4 -> 0.0.5) | `fix: resolve crash on startup` |
+| `feat:` | **minor** (0.0.4 -> 0.1.0) | `feat: add CSV export` |
+| `feat!:`, `fix!:`, or body contains `BREAKING CHANGE` | **major** (0.0.4 -> 1.0.0) | `feat!: redesign search API` |
+
+The highest-severity bump among all commits since the last release wins. A scope in parentheses is optional: `feat(search): add fuzzy matching`.
+
+Release notes are generated automatically from the commit message list.
+
 ## Requirements
 
 - Node.js >= 20
