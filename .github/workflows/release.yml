@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm ci
+        working-directory: backend
+      - run: npm test
+        working-directory: backend
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Get current version
+        id: current_version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Collect commit messages since last tag
+        id: changelog
+        run: |
+          last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$last_tag" ]; then
+            log=$(git log --oneline --no-decorate)
+            subjects=$(git log --format="%s")
+          else
+            log=$(git log --oneline --no-decorate "${last_tag}..HEAD")
+            subjects=$(git log --format="%s" "${last_tag}..HEAD")
+          fi
+          # Format as a markdown list
+          changelog=$(echo "$log" | sed 's/^[a-f0-9]* /- /')
+          # Write to GITHUB_OUTPUT using delimiter for multiline
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo "$changelog"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+          # Write subjects for bump detection
+          {
+            echo "subjects<<SUBJECTS_EOF"
+            echo "$subjects"
+            echo "SUBJECTS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Determine version bump type
+        id: bump_type
+        run: |
+          subjects="${{ steps.changelog.outputs.subjects }}"
+          # Default to patch
+          bump="patch"
+          # Check for feat: -> minor
+          if echo "$subjects" | grep -qiE "^feat(\(.+\))?!?:"; then
+            bump="minor"
+          fi
+          # Check for BREAKING CHANGE or !: -> major
+          if echo "$subjects" | grep -qiE "(^[a-z]+(\(.+\))?!:|BREAKING CHANGE)"; then
+            bump="major"
+          fi
+          echo "bump=${bump}" >> "$GITHUB_OUTPUT"
+          echo "Detected bump type: ${bump}"
+
+      - name: Bump version
+        id: bump
+        run: |
+          IFS='.' read -r major minor patch <<< "${{ steps.current_version.outputs.version }}"
+          bump_type="${{ steps.bump_type.outputs.bump }}"
+          if [ "$bump_type" = "major" ]; then
+            new_version="$((major + 1)).0.0"
+          elif [ "$bump_type" = "minor" ]; then
+            new_version="${major}.$((minor + 1)).0"
+          else
+            new_version="${major}.${minor}.$((patch + 1))"
+          fi
+          echo "new_version=${new_version}" >> "$GITHUB_OUTPUT"
+          echo "New version: ${new_version}"
+
+      - name: Update package.json version
+        run: npm version ${{ steps.bump.outputs.new_version }} --no-git-tag-version
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to v${{ steps.bump.outputs.new_version }}"
+          git tag "v${{ steps.bump.outputs.new_version }}"
+          git push origin master --tags
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.bump.outputs.new_version }}
+          name: v${{ steps.bump.outputs.new_version }}
+          body: |
+            ## What's Changed
+
+            ${{ steps.changelog.outputs.changelog }}
+          generate_release_notes: false
