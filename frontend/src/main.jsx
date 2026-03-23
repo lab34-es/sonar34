@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom'
+import { HashRouter } from 'react-router-dom'
 import { CssVarsProvider, extendTheme } from '@mui/joy/styles'
 import CssBaseline from '@mui/joy/CssBaseline'
 import './index.css'
@@ -16,11 +16,11 @@ const theme = extendTheme({
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <BrowserRouter>
+    <HashRouter>
       <CssVarsProvider defaultMode="light" theme={theme}>
         <CssBaseline />
         <App />
       </CssVarsProvider>
-    </BrowserRouter>
+    </HashRouter>
   </StrictMode>,
 )
