@@ -61,8 +61,6 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/) t
 
 The highest-severity bump among all commits since the last release wins. A scope in parentheses is optional: `feat(search): add fuzzy matching`.
 
-Release notes are generated automatically from the commit message list.
-
 ## Requirements
 
 - Node.js >= 20
