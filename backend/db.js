@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "massrepo.db");
+const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "massrepo.db");
 
 const db = new Database(DB_PATH);
 
